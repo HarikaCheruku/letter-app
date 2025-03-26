@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
-import {jwtDecode} from 'jwt-decode';
+import {jwtDecode} from 'jwt-decode'; // Updated import
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 
@@ -19,6 +19,10 @@ function Editor() {
 
   const navigate = useNavigate();
 
+  // Determine the base URL based on the environment
+  const BASE_URL = process.env.REACT_APP_BASE_URL || 'http://localhost:5001';
+  const isVercel = process.env.REACT_APP_VERCEL === '1';
+
   // Get the token and access token from the URL
   const urlParams = new URLSearchParams(window.location.search);
   const token = urlParams.get('token');
@@ -27,17 +31,30 @@ function Editor() {
   // Store the token in localStorage and decode the role
   useEffect(() => {
     if (token) {
-      localStorage.setItem('token', token);
-      const decoded = jwtDecode(token);
-      setUserRole(decoded.role || 'user');
-      console.log('User role:', decoded.role);
+      try {
+        localStorage.setItem('token', token);
+        const decoded = jwtDecode(token);
+        setUserRole(decoded.role || 'user');
+        console.log('User role:', decoded.role);
+      } catch (error) {
+        console.error('Failed to decode token:', error);
+        localStorage.removeItem('token');
+        navigate('/');
+      }
+    } else {
+      const storedToken = localStorage.getItem('token');
+      if (!storedToken) {
+        navigate('/');
+      }
     }
-  }, [token]);
+  }, [token, navigate]);
 
-  // Connect to Socket.IO server
+  // Connect to Socket.IO server (only if not on Vercel)
   useEffect(() => {
+    if (isVercel) return; // Skip Socket.IO on Vercel
+
     const token = localStorage.getItem('token');
-    socketRef.current = io('http://localhost:5001', {
+    socketRef.current = io(BASE_URL, {
       auth: { token },
     });
 
@@ -60,9 +77,9 @@ function Editor() {
     };
   }, []);
 
-  // Handle real-time collaboration
+  // Handle real-time collaboration (only if not on Vercel)
   useEffect(() => {
-    if (!isCollaborating || !quillRef.current) return;
+    if (isVercel || !isCollaborating || !quillRef.current) return;
 
     const quill = quillRef.current.getEditor();
 
@@ -89,23 +106,27 @@ function Editor() {
   useEffect(() => {
     const fetchDrafts = async () => {
       const storedToken = localStorage.getItem('token');
-      console.log('Fetching drafts with token:', storedToken);
       if (!storedToken) {
         console.error('No token found in localStorage');
+        navigate('/');
         return;
       }
       try {
-        const res = await axios.get('http://localhost:5001/api/drafts', {
+        const res = await axios.get(`${BASE_URL}/api/drafts`, {
           headers: { Authorization: `Bearer ${storedToken}` },
         });
         setDrafts(res.data);
         console.log('Drafts fetched:', res.data);
       } catch (error) {
         console.error('Failed to fetch drafts:', error.response?.data || error.message);
+        if (error.response?.status === 401 || error.response?.status === 403) {
+          localStorage.removeItem('token');
+          navigate('/');
+        }
       }
     };
     fetchDrafts();
-  }, []);
+  }, [navigate]);
 
   // Fetch all drafts (admin only)
   useEffect(() => {
@@ -113,7 +134,7 @@ function Editor() {
       const storedToken = localStorage.getItem('token');
       if (!storedToken || userRole !== 'admin') return;
       try {
-        const res = await axios.get('http://localhost:5001/api/admin/drafts', {
+        const res = await axios.get(`${BASE_URL}/api/admin/drafts`, {
           headers: { Authorization: `Bearer ${storedToken}` },
         });
         setAllDrafts(res.data);
@@ -127,10 +148,13 @@ function Editor() {
 
   const saveDraft = async () => {
     const token = localStorage.getItem('token');
-    console.log('Saving draft with content:', content, 'and token:', token);
+    if (!content) {
+      alert('Please write a letter before saving as a draft');
+      return;
+    }
     try {
       const res = await axios.post(
-        'http://localhost:5001/api/draft',
+        `${BASE_URL}/api/draft`,
         { content },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -138,9 +162,11 @@ function Editor() {
       setContent('');
       setIsCollaborating(false);
       setRoomId('');
+      alert('Draft saved successfully');
       console.log('Draft saved:', res.data);
     } catch (error) {
       console.error('Failed to save draft:', error.response?.data || error.message);
+      alert('Failed to save draft: ' + (error.response?.data?.error || error.message));
     }
   };
 
@@ -151,10 +177,9 @@ function Editor() {
       return;
     }
     setIsSaving(true);
-    console.log('Saving to Google Drive with content:', content, 'and token:', token);
     try {
       const res = await axios.post(
-        'http://localhost:5001/api/save-to-drive',
+        `${BASE_URL}/api/save-to-drive`,
         { content, accessToken },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -175,7 +200,7 @@ function Editor() {
     const token = localStorage.getItem('token');
     if (!confirm('Are you sure you want to delete this draft?')) return;
     try {
-      await axios.delete(`http://localhost:5001/api/draft/${id}`, {
+      await axios.delete(`${BASE_URL}/api/draft/${id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       setDrafts(drafts.filter((draft) => draft.id !== id));
@@ -183,7 +208,7 @@ function Editor() {
       console.log('Draft deleted:', id);
     } catch (error) {
       console.error('Failed to delete draft:', error.response?.data || error.message);
-      alert('Failed to delete draft');
+      alert('Failed to delete draft: ' + (error.response?.data?.error || error.message));
     }
   };
 
@@ -191,7 +216,7 @@ function Editor() {
     const token = localStorage.getItem('token');
     if (!confirm('Are you sure you want to delete this draft (admin)?')) return;
     try {
-      await axios.delete(`http://localhost:5001/api/admin/draft/${id}`, {
+      await axios.delete(`${BASE_URL}/api/admin/draft/${id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       setAllDrafts(allDrafts.filter((draft) => draft.id !== id));
@@ -199,7 +224,7 @@ function Editor() {
       console.log('Draft deleted by admin:', id);
     } catch (error) {
       console.error('Failed to delete draft (admin):', error.response?.data || error.message);
-      alert('Failed to delete draft (admin)');
+      alert('Failed to delete draft (admin): ' + (error.response?.data?.error || error.message));
     }
   };
 
@@ -209,10 +234,14 @@ function Editor() {
   };
 
   const createRoom = async () => {
+    if (isVercel) {
+      alert('Real-time collaboration is not supported on this deployment. Use the Render deployment instead.');
+      return;
+    }
     const token = localStorage.getItem('token');
     try {
       const res = await axios.post(
-        'http://localhost:5001/api/room',
+        `${BASE_URL}/api/room`,
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -220,7 +249,7 @@ function Editor() {
       alert(`Room created! Share this Room ID: ${res.data.roomId}`);
     } catch (error) {
       console.error('Failed to create room:', error.response?.data || error.message);
-      alert('Failed to create room');
+      alert('Failed to create room: ' + (error.response?.data?.error || error.message));
     }
   };
 
@@ -276,33 +305,35 @@ function Editor() {
         <button className="logout-btn" onClick={handleLogout}>Logout</button>
       </div>
 
-      <div className="collaboration-controls">
-        <button className="collab-btn" onClick={createRoom} disabled={isCollaborating}>
-          Create Room
-        </button>
-        <input
-          type="text"
-          placeholder="Enter Room ID for Collaboration"
-          value={roomId}
-          onChange={(e) => setRoomId(e.target.value)}
-          disabled={isCollaborating}
-        />
-        <button
-          className="collab-btn"
-          onClick={startCollaboration}
-          disabled={isCollaborating}
-        >
-          Start Collaboration
-        </button>
-        {isCollaborating && (
-          <button className="collab-btn" onClick={leaveCollaboration}>
-            Leave Collaboration
+      {!isVercel && (
+        <div className="collaboration-controls">
+          <button className="collab-btn" onClick={createRoom} disabled={isCollaborating}>
+            Create Room
           </button>
-        )}
-        <button className="collab-btn" onClick={shareRoomId}>
-          Share Room ID
-        </button>
-      </div>
+          <input
+            type="text"
+            placeholder="Enter Room ID for Collaboration"
+            value={roomId}
+            onChange={(e) => setRoomId(e.target.value)}
+            disabled={isCollaborating}
+          />
+          <button
+            className="collab-btn"
+            onClick={startCollaboration}
+            disabled={isCollaborating}
+          >
+            Start Collaboration
+          </button>
+          {isCollaborating && (
+            <button className="collab-btn" onClick={leaveCollaboration}>
+              Leave Collaboration
+            </button>
+          )}
+          <button className="collab-btn" onClick={shareRoomId}>
+            Share Room ID
+          </button>
+        </div>
+      )}
 
       <ReactQuill
         ref={quillRef}
