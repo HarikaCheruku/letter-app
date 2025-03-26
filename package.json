@@ -1,33 +1,34 @@
 {
     "name": "letter-app",
     "version": "1.0.0",
-    "private": true,
-    "workspaces": [
-        "client",
-        "server"
-    ],
     "scripts": {
-        "start": "concurrently \"cd server && npm run start\" \"cd client && npm start\"",
-        "build": "cd client && npm run build",
-        "client": "cd client && npm start",
-        "server": "cd server && npm start",
-        "dev": "concurrently \"cd server && npm run dev\" \"cd client && npm start\""
+      "build": "cd client && npm install && npm run build",
+      "start": "cd server && node index.js"
     },
     "devDependencies": {
         "concurrently": "^9.0.1"
     },
     "dependencies": {
-  "express": "^4.18.2",
-  "cors": "^2.8.5",
-  "pg": "^8.13.0",
-  "jsonwebtoken": "^9.0.2",
-  "googleapis": "^144.0.0",
-  "socket.io": "^4.7.5",
-  "uuid": "^10.0.0",
-  "dotenv": "^16.4.5"
-},
+        "express": "^4.18.2",
+        "cors": "^2.8.5",
+        "pg": "^8.13.0",
+        "jsonwebtoken": "^9.0.2",
+        "googleapis": "^144.0.0",
+        "socket.io": "^4.7.5",
+        "uuid": "^10.0.0",
+        "dotenv": "^16.4.5"
+    },
     "keywords": [],
     "author": "",
     "license": "ISC",
+    "main": "index.js",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/HarikaCheruku/letter-app.git"
+    },
+    "bugs": {
+        "url": "https://github.com/HarikaCheruku/letter-app/issues"
+    },
+    "homepage": "https://github.com/HarikaCheruku/letter-app#readme",
     "description": ""
 }
