@@ -20,9 +20,9 @@ console.log('RENDER:', process.env.RENDER);
 
 // Determine the environment (local, Vercel, or Render)
 const isVercel = process.env.VERCEL === '1';
-const isRender = process.env.RENDER === '1';
+const isRender = process.env.RENDER === '1' || process.env.RENDER === 'true'; // Updated to handle 'true'
 const frontendOrigin = isVercel
-  ? 'https://letter-zuta5wv57-harikacherukus-projects.vercel.app' // Updated Vercel URL
+  ? 'https://letter-zuta5wv57-harikacherukus-projects.vercel.app'
   : isRender
   ? 'https://letter-app-alrf.onrender.com'
   : 'http://localhost:3000';
@@ -182,7 +182,7 @@ app.get('/auth/google/callback', async (req, res) => {
       { expiresIn: '1h' }
     );
     const redirectUrl = isVercel
-      ? `https://letter-zuta5wv57-harikacherukus-projects.vercel.app/editor?token=${token}&accessToken=${tokens.access_token}` // Updated Vercel URL
+      ? `https://letter-zuta5wv57-harikacherukus-projects.vercel.app/editor?token=${token}&accessToken=${tokens.access_token}`
       : isRender
       ? `https://letter-app-alrf.onrender.com/editor?token=${token}&accessToken=${tokens.access_token}`
       : `http://localhost:3000/editor?token=${token}&accessToken=${tokens.access_token}`;
