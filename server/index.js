@@ -341,5 +341,10 @@ app.post('/api/save-to-drive', authenticateToken, async (req, res) => {
   }
 });
 
+// Add a simple root route for debugging
+app.get('/', (req, res) => {
+  res.status(200).json({ message: 'Letter App Backend is running!' });
+});
+
 const PORT = process.env.PORT || 5001;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
