@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
-import {jwtDecode} from 'jwt-decode';
-import { useNavigate } from 'react-router-dom';
+import { jwtDecode } from 'jwt-decode';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { io } from 'socket.io-client';
 
 function Editor() {
@@ -14,31 +14,56 @@ function Editor() {
   const [userRole, setUserRole] = useState('user');
   const [roomId, setRoomId] = useState('');
   const [isCollaborating, setIsCollaborating] = useState(false);
+  const [error, setError] = useState(null); // Added for error handling
   const quillRef = useRef(null);
   const socketRef = useRef(null);
 
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Get the token and access token from the URL
-  const urlParams = new URLSearchParams(window.location.search);
-  const token = urlParams.get('token');
-  const accessToken = urlParams.get('accessToken');
+  const queryParams = new URLSearchParams(location.search);
+  const token = queryParams.get('token');
+  const accessToken = queryParams.get('accessToken');
 
   // Store the token in localStorage and decode the role
   useEffect(() => {
     if (token) {
-      localStorage.setItem('token', token);
-      const decoded = jwtDecode(token);
-      setUserRole(decoded.role || 'user');
-      console.log('User role:', decoded.role);
+      try {
+        localStorage.setItem('token', token);
+        const decoded = jwtDecode(token);
+        setUserRole(decoded.role || 'user');
+        console.log('Token decoded:', decoded);
+        console.log('User role set to:', decoded.role || 'user');
+      } catch (err) {
+        console.error('Failed to decode token:', err.message);
+        setError('Invalid token. Please log in again.');
+        navigate('/');
+      }
+    } else {
+      console.error('No token found in URL');
+      setError('No token found. Please log in again.');
+      navigate('/');
     }
-  }, [token]);
+  }, [token, navigate]);
 
   // Connect to Socket.IO server
   useEffect(() => {
-    const token = localStorage.getItem('token');
+    const storedToken = localStorage.getItem('token');
+    if (!storedToken) {
+      console.error('No token in localStorage for Socket.IO connection');
+      setError('Authentication required. Please log in again.');
+      navigate('/');
+      return;
+    }
+
+    console.log('Connecting to Socket.IO with backend URL:', process.env.REACT_APP_BACKEND_URL);
     socketRef.current = io(process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001', {
-      auth: { token },
+      auth: { token: storedToken },
+      transports: ['websocket'], // Force WebSocket transport for better mobile compatibility
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
     });
 
     socketRef.current.on('connect', () => {
@@ -47,11 +72,12 @@ function Editor() {
 
     socketRef.current.on('connect_error', (error) => {
       console.error('Socket.IO connection error:', error.message);
+      setError('Failed to connect to collaboration server. Please try again.');
     });
 
     socketRef.current.on('room-error', (message) => {
       console.log('Room error:', message);
-      alert(message);
+      setError(message);
       setIsCollaborating(false);
       setRoomId('');
     });
@@ -75,6 +101,7 @@ function Editor() {
     }
 
     return () => {
+      console.log('Disconnecting Socket.IO');
       socketRef.current.disconnect();
     };
   }, [userRole]);
@@ -105,7 +132,7 @@ function Editor() {
       quill.off('text-change', handleTextChange);
       socketRef.current.off('receive-changes');
     };
-  }, [isCollaborating, roomId]);
+  }, [isCollaborating, roomId, content]);
 
   // Sync Quill content with state
   const handleEditorChange = (value) => {
@@ -119,6 +146,8 @@ function Editor() {
       console.log('Fetching drafts with token:', storedToken);
       if (!storedToken) {
         console.error('No token found in localStorage');
+        setError('Authentication required. Please log in again.');
+        navigate('/');
         return;
       }
       try {
@@ -129,10 +158,11 @@ function Editor() {
         console.log('Drafts fetched:', res.data);
       } catch (error) {
         console.error('Failed to fetch drafts:', error.response?.data || error.message);
+        setError('Failed to fetch drafts. Please try again.');
       }
     };
     fetchDrafts();
-  }, []);
+  }, [navigate]);
 
   // Fetch all drafts (admin only)
   const fetchAllDrafts = async () => {
@@ -146,6 +176,7 @@ function Editor() {
       console.log('All drafts fetched (admin):', res.data);
     } catch (error) {
       console.error('Failed to fetch all drafts:', error.response?.data || error.message);
+      setError('Failed to fetch all drafts (admin).');
     }
   };
 
@@ -155,6 +186,15 @@ function Editor() {
 
   const saveDraft = async () => {
     const token = localStorage.getItem('token');
+    if (!token) {
+      setError('Authentication required. Please log in again.');
+      navigate('/');
+      return;
+    }
+    if (!content) {
+      setError('Please write something before saving a draft.');
+      return;
+    }
     console.log('Saving draft with content:', content, 'and token:', token);
     try {
       const res = await axios.post(
@@ -172,29 +212,41 @@ function Editor() {
       }
     } catch (error) {
       console.error('Failed to save draft:', error.response?.data || error.message);
+      setError('Failed to save draft: ' + (error.response?.data?.details || error.message));
     }
   };
 
   const saveToDrive = async () => {
     const token = localStorage.getItem('token');
+    if (!token) {
+      setError('Authentication required. Please log in again.');
+      navigate('/');
+      return;
+    }
+    if (!accessToken) {
+      setError('Google access token missing. Please log in again.');
+      navigate('/');
+      return;
+    }
     if (!content) {
-      alert('Please write a letter before saving to Google Drive');
+      setError('Please write a letter before saving to Google Drive.');
       return;
     }
     setIsSaving(true);
-    console.log('Saving to Google Drive with content:', content, 'and token:', token);
+    console.log('Saving to Google Drive with content:', content, 'and token:', token, 'accessToken:', accessToken);
     try {
       const res = await axios.post(
         `${process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001'}/api/save-to-drive`,
         { content, accessToken },
         { headers: { Authorization: `Bearer ${token}` } }
       );
+      setError(null); // Clear any previous errors
       alert(res.data.message);
       setContent('');
       console.log('Google Drive response:', res.data);
     } catch (error) {
       console.error('Failed to save to Google Drive:', error.response?.data || error.message);
-      alert(`Failed to save to Google Drive: ${error.response?.data?.details || error.message}`);
+      setError(`Failed to save to Google Drive: ${error.response?.data?.details || error.message}`);
     } finally {
       setIsSaving(false);
     }
@@ -202,12 +254,18 @@ function Editor() {
 
   const deleteDraft = async (id) => {
     const token = localStorage.getItem('token');
+    if (!token) {
+      setError('Authentication required. Please log in again.');
+      navigate('/');
+      return;
+    }
     if (!confirm('Are you sure you want to delete this draft?')) return;
     try {
       await axios.delete(`${process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001'}/api/draft/${id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       setDrafts(drafts.filter((draft) => draft.id !== id));
+      setError(null);
       alert('Draft deleted successfully');
       console.log('Draft deleted:', id);
 
@@ -217,23 +275,29 @@ function Editor() {
       }
     } catch (error) {
       console.error('Failed to delete draft:', error.response?.data || error.message);
-      alert('Failed to delete draft');
+      setError('Failed to delete draft: ' + (error.response?.data?.details || error.message));
     }
   };
 
   const deleteDraftAdmin = async (id) => {
     const token = localStorage.getItem('token');
+    if (!token) {
+      setError('Authentication required. Please log in again.');
+      navigate('/');
+      return;
+    }
     if (!confirm('Are you sure you want to delete this draft (admin)?')) return;
     try {
       await axios.delete(`${process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001'}/api/admin/draft/${id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       setAllDrafts(allDrafts.filter((draft) => draft.id !== id));
+      setError(null);
       alert('Draft deleted successfully (admin)');
       console.log('Draft deleted by admin:', id);
     } catch (error) {
       console.error('Failed to delete draft (admin):', error.response?.data || error.message);
-      alert('Failed to delete draft (admin)');
+      setError('Failed to delete draft (admin): ' + (error.response?.data?.details || error.message));
     }
   };
 
@@ -244,6 +308,11 @@ function Editor() {
 
   const createRoom = async () => {
     const token = localStorage.getItem('token');
+    if (!token) {
+      setError('Authentication required. Please log in again.');
+      navigate('/');
+      return;
+    }
     try {
       const res = await axios.post(
         `${process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001'}/api/room`,
@@ -251,32 +320,36 @@ function Editor() {
         { headers: { Authorization: `Bearer ${token}` } }
       );
       setRoomId(res.data.roomId);
+      setError(null);
       alert(`Room created! Share this Room ID: ${res.data.roomId}`);
+      console.log('Room created:', res.data.roomId);
     } catch (error) {
       console.error('Failed to create room:', error.response?.data || error.message);
-      alert('Failed to create room');
+      setError('Failed to create room: ' + (error.response?.data?.details || error.message));
     }
   };
 
   const startCollaboration = () => {
     if (!roomId) {
-      alert('Please enter a room ID to start collaboration');
+      setError('Please enter a room ID to start collaboration.');
       return;
     }
     setIsCollaborating(true);
     setContent('');
+    setError(null);
   };
 
   const shareRoomId = () => {
     if (!roomId) {
-      alert('No room ID to share. Create or join a room first.');
+      setError('No room ID to share. Create or join a room first.');
       return;
     }
     navigator.clipboard.writeText(roomId).then(() => {
+      setError(null);
       alert('Room ID copied to clipboard! Share it with others to collaborate.');
     }).catch((error) => {
       console.error('Failed to copy room ID:', error);
-      alert('Failed to copy room ID. Please copy it manually: ' + roomId);
+      setError('Failed to copy room ID. Please copy it manually: ' + roomId);
     });
   };
 
@@ -284,6 +357,7 @@ function Editor() {
     setIsCollaborating(false);
     setRoomId('');
     setContent('');
+    setError(null);
   };
 
   const modules = {
@@ -305,6 +379,11 @@ function Editor() {
 
   return (
     <div className="editor-container">
+      {error && (
+        <div className="error-message" style={{ color: 'red', marginBottom: '10px' }}>
+          {error}
+        </div>
+      )}
       <div className="header">
         <h1>Letter Editor</h1>
         <button className="logout-btn" onClick={handleLogout}>Logout</button>
