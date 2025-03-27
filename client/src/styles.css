@@ -12,7 +12,7 @@ body {
   line-height: 1.6;
 }
 
-/* Login Page (unchanged) */
+/* Login Page */
 .login-container {
   display: flex;
   flex-direction: column;
@@ -357,5 +357,159 @@ body {
   to {
     opacity: 1;
     transform: translateX(0);
+  }
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {
+  /* Login Page */
+  .login-container {
+    padding: 10px;
+  }
+
+  .login-container h1 {
+    font-size: 2rem;
+  }
+
+  .login-container p {
+    font-size: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .login-container button {
+    padding: 10px 20px;
+    font-size: 0.9rem;
+  }
+
+  /* Editor Page */
+  .editor-container {
+    max-width: 100%;
+    margin: 1rem;
+    padding: 1.5rem;
+  }
+
+  .editor-container h1 {
+    font-size: 2rem;
+  }
+
+  .editor-container h2 {
+    font-size: 1.5rem;
+    margin: 1.5rem 0 1rem;
+  }
+
+  .header {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .logout-btn {
+    padding: 6px 12px;
+    font-size: 0.9rem;
+  }
+
+  .collaboration-controls {
+    gap: 0.5rem;
+  }
+
+  .collaboration-controls input {
+    padding: 6px 10px;
+    font-size: 0.9rem;
+    width: 100%;
+    max-width: 300px;
+  }
+
+  .collaboration-controls .collab-btn {
+    padding: 6px 12px;
+    font-size: 0.9rem;
+  }
+
+  .ql-editor {
+    font-size: 1rem;
+    padding: 1rem;
+    min-height: 200px;
+  }
+
+  .ql-toolbar.ql-snow {
+    border-radius: 10px;
+  }
+
+  .char-counter {
+    font-size: 0.8rem;
+  }
+
+  .button-group {
+    flex-direction: column;
+    gap: 0.8rem;
+  }
+
+  .button-group button {
+    padding: 10px 20px;
+    font-size: 0.9rem;
+    width: 100%;
+    max-width: 300px;
+    margin: 0 auto;
+  }
+
+  .editor-container ul {
+    padding: 0 0.5rem;
+    max-height: 200px;
+  }
+
+  .editor-container li {
+    padding: 8px 10px;
+    font-size: 0.9rem;
+  }
+
+  .delete-btn {
+    padding: 4px 8px;
+    font-size: 0.8rem;
+  }
+}
+
+/* Extra small screens (e.g., phones below 480px) */
+@media (max-width: 480px) {
+  .login-container h1 {
+    font-size: 1.5rem;
+  }
+
+  .login-container p {
+    font-size: 0.9rem;
+  }
+
+  .login-container button {
+    padding: 8px 16px;
+    font-size: 0.8rem;
+  }
+
+  .editor-container {
+    margin: 0.5rem;
+    padding: 1rem;
+  }
+
+  .editor-container h1 {
+    font-size: 1.5rem;
+  }
+
+  .editor-container h2 {
+    font-size: 1.2rem;
+  }
+
+  .collaboration-controls input {
+    font-size: 0.8rem;
+  }
+
+  .collaboration-controls .collab-btn {
+    font-size: 0.8rem;
+  }
+
+  .ql-editor {
+    font-size: 0.9rem;
+    padding: 0.8rem;
+    min-height: 150px;
+  }
+
+  .button-group button {
+    padding: 8px 16px;
+    font-size: 0.8rem;
   }
 }
