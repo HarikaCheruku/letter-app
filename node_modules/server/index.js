@@ -13,13 +13,23 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 
+// Log environment variables for debugging
+console.log('Environment Variables:');
+console.log('VERCEL:', process.env.VERCEL);
+console.log('RENDER:', process.env.RENDER);
+
 // Determine the environment (local, Vercel, or Render)
 const isVercel = process.env.VERCEL === '1';
+const isRender = process.env.RENDER === '1';
 const frontendOrigin = isVercel
-  ? 'https://letter-ifyiq2mk7-harikacherukus-projects.vercel.app'
-  : process.env.RENDER === '1'
-  ? 'https://letter-app-alrf.onrender.com' // Updated Render URL
+  ? 'https://letter-zuta5wv57-harikacherukus-projects.vercel.app' // Updated Vercel URL
+  : isRender
+  ? 'https://letter-app-alrf.onrender.com'
   : 'http://localhost:3000';
+
+console.log('isVercel:', isVercel);
+console.log('isRender:', isRender);
+console.log('frontendOrigin:', frontendOrigin);
 
 // Initialize Socket.IO only if not on Vercel (Vercel doesn't support WebSockets)
 let io;
@@ -40,7 +50,7 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
     rejectUnauthorized: false,
-    sslmode: 'require', // Explicitly require SSL
+    sslmode: 'require',
   },
 });
 
@@ -53,22 +63,19 @@ pool.connect(async (err, client, release) => {
 
   try {
     console.log('Connected to database');
-    // Set the search_path to public
     await client.query('SET search_path TO public');
     console.log('Set search_path to public');
 
-    // Query the database name and schema search path
     const dbInfo = await client.query('SELECT current_database(), current_schema()');
     console.log('Database:', dbInfo.rows[0].current_database);
     console.log('Current schema:', dbInfo.rows[0].current_schema);
 
-    // List tables in the public schema
     const tableInfo = await client.query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'");
     console.log('Tables in public schema:', tableInfo.rows.map(row => row.table_name));
   } catch (error) {
     console.error('Error during database setup:', error.stack);
   } finally {
-    release(); // Release the client back to the pool
+    release();
   }
 });
 
@@ -95,7 +102,6 @@ if (!isVercel) {
     });
   });
 
-  // Socket.IO: Handle real-time collaboration
   io.on('connection', (socket) => {
     console.log('A user connected:', socket.id, 'User:', socket.user.email);
 
@@ -176,10 +182,11 @@ app.get('/auth/google/callback', async (req, res) => {
       { expiresIn: '1h' }
     );
     const redirectUrl = isVercel
-      ? `https://letter-ifyiq2mk7-harikacherukus-projects.vercel.app/editor?token=${token}&accessToken=${tokens.access_token}`
-      : process.env.RENDER === '1'
-      ? `https://letter-app-alrf.onrender.com/editor?token=${token}&accessToken=${tokens.access_token}` // Updated Render URL
+      ? `https://letter-zuta5wv57-harikacherukus-projects.vercel.app/editor?token=${token}&accessToken=${tokens.access_token}` // Updated Vercel URL
+      : isRender
+      ? `https://letter-app-alrf.onrender.com/editor?token=${token}&accessToken=${tokens.access_token}`
       : `http://localhost:3000/editor?token=${token}&accessToken=${tokens.access_token}`;
+    console.log('Redirecting to:', redirectUrl);
     res.redirect(redirectUrl);
   } catch (error) {
     console.error('Google auth error:', error.response?.data || error.message);
@@ -360,8 +367,11 @@ app.post('/api/save-to-drive', authenticateToken, async (req, res) => {
 // Serve React frontend static files
 app.use(express.static(path.join(__dirname, '../client/build')));
 
-// Handle all other routes by serving the React app
+// Handle all other routes by serving the React app, but exclude static file paths
 app.get('*', (req, res) => {
+  if (req.url.startsWith('/static/')) {
+    return res.status(404).send('Static file not found');
+  }
   res.sendFile(path.join(__dirname, '../client/build', 'index.html'));
 });
 
