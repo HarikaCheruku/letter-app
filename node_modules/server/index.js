@@ -8,74 +8,34 @@ const { Server } = require('socket.io');
 const http = require('http');
 const { v4: uuidv4 } = require('uuid');
 require('dotenv').config();
-const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-
-// Log environment variables for debugging
-console.log('Environment Variables:');
-console.log('VERCEL:', process.env.VERCEL);
-console.log('RENDER:', process.env.RENDER);
-
-// Determine the environment (local, Vercel, or Render)
-const isVercel = process.env.VERCEL === '1';
-const isRender = process.env.RENDER === '1' || process.env.RENDER === 'true'; // Updated to handle 'true'
-const frontendOrigin = isVercel
-  ? 'https://letter-zuta5wv57-harikacherukus-projects.vercel.app'
-  : isRender
-  ? 'https://letter-app-alrf.onrender.com'
-  : 'http://localhost:3000';
-
-console.log('isVercel:', isVercel);
-console.log('isRender:', isRender);
-console.log('frontendOrigin:', frontendOrigin);
-
-// Initialize Socket.IO only if not on Vercel (Vercel doesn't support WebSockets)
-let io;
-if (!isVercel) {
-  io = new Server(server, {
-    cors: {
-      origin: frontendOrigin,
-      methods: ['GET', 'POST'],
-    },
-  });
-}
-
-app.use(cors({ origin: frontendOrigin }));
-app.use(express.json());
-
-// Database connection with SSL for Neon
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false,
-    sslmode: 'require',
+const io = new Server(server, {
+  cors: {
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000', // Use the deployed frontend URL in production
+    methods: ['GET', 'POST'],
   },
 });
 
-// Test database connection and set search_path
-pool.connect(async (err, client, release) => {
+app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000' }));
+app.use(express.json());
+
+const pool = new Pool({
+  user: process.env.DB_USER,
+  host: process.env.DB_HOST,
+  database: process.env.DB_NAME,
+  password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT,
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false, // Enable SSL for production
+});
+
+// Test database connection
+pool.connect((err) => {
   if (err) {
     console.error('Database connection error:', err.stack);
-    return;
-  }
-
-  try {
+  } else {
     console.log('Connected to database');
-    await client.query('SET search_path TO public');
-    console.log('Set search_path to public');
-
-    const dbInfo = await client.query('SELECT current_database(), current_schema()');
-    console.log('Database:', dbInfo.rows[0].current_database);
-    console.log('Current schema:', dbInfo.rows[0].current_schema);
-
-    const tableInfo = await client.query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'");
-    console.log('Tables in public schema:', tableInfo.rows.map(row => row.table_name));
-  } catch (error) {
-    console.error('Error during database setup:', error.stack);
-  } finally {
-    release();
   }
 });
 
@@ -83,68 +43,73 @@ pool.connect(async (err, client, release) => {
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
+  process.env.GOOGLE_REDIRECT_URI || 'http://localhost:5001/auth/google/callback'
 );
 
-// Socket.IO: Authenticate WebSocket connections (only if not on Vercel)
-if (!isVercel) {
-  io.use((socket, next) => {
-    const token = socket.handshake.auth.token;
-    if (!token) {
-      return next(new Error('Authentication error: No token provided'));
+// Socket.IO: Authenticate WebSocket connections
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  if (!token) {
+    return next(new Error('Authentication error: No token provided'));
+  }
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) {
+      return next(new Error('Authentication error: Invalid token'));
     }
-    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-      if (err) {
-        return next(new Error('Authentication error: Invalid token'));
+    socket.user = user;
+    next();
+  });
+});
+
+// Socket.IO: Handle real-time collaboration and draft updates
+io.on('connection', (socket) => {
+  console.log('A user connected:', socket.id, 'User:', socket.user.email);
+
+  // Join the admin room if the user is an admin
+  if (socket.user.role === 'admin') {
+    socket.join('admin-room');
+    console.log(`Admin ${socket.user.email} joined admin-room`);
+  }
+
+  socket.on('join-room', async (roomId) => {
+    try {
+      const { rows } = await pool.query('SELECT * FROM rooms WHERE room_id = $1', [roomId]);
+      if (rows.length === 0) {
+        socket.emit('room-error', 'Invalid room ID');
+        return;
       }
-      socket.user = user;
-      next();
-    });
+
+      socket.join(roomId);
+      console.log(`User ${socket.user.email} (${socket.id}) joined room ${roomId}`);
+      socket.emit('load-document', rows[0].content || '');
+    } catch (error) {
+      console.error('Error joining room:', error);
+      socket.emit('room-error', 'Failed to join room');
+    }
   });
 
-  io.on('connection', (socket) => {
-    console.log('A user connected:', socket.id, 'User:', socket.user.email);
+  socket.on('send-changes', async (data) => {
+    const { roomId, delta, content } = data;
+    socket.to(roomId).emit('receive-changes', delta);
+    console.log(`Broadcasting changes in room ${roomId} by ${socket.user.email}:`, delta);
 
-    socket.on('join-room', async (roomId) => {
-      try {
-        const { rows } = await pool.query('SELECT * FROM rooms WHERE room_id = $1', [roomId]);
-        if (rows.length === 0) {
-          socket.emit('room-error', 'Invalid room ID');
-          return;
-        }
-
-        socket.join(roomId);
-        console.log(`User ${socket.user.email} (${socket.id}) joined room ${roomId}`);
-        socket.emit('load-document', rows[0].content || '');
-      } catch (error) {
-        console.error('Error joining room:', error);
-        socket.emit('room-error', 'Failed to join room');
-      }
-    });
-
-    socket.on('send-changes', async (data) => {
-      const { roomId, delta, content } = data;
-      socket.to(roomId).emit('receive-changes', delta);
-      console.log(`Broadcasting changes in room ${roomId} by ${socket.user.email}:`, delta);
-
-      try {
-        await pool.query('UPDATE rooms SET content = $1 WHERE room_id = $2', [content, roomId]);
-      } catch (error) {
-        console.error('Error saving document content:', error);
-      }
-    });
-
-    socket.on('disconnect', () => {
-      console.log('A user disconnected:', socket.id, 'User:', socket.user.email);
-    });
+    try {
+      await pool.query('UPDATE rooms SET content = $1 WHERE room_id = $2', [content, roomId]);
+    } catch (error) {
+      console.error('Error saving document content:', error);
+    }
   });
-}
+
+  socket.on('disconnect', () => {
+    console.log('A user disconnected:', socket.id, 'User:', socket.user.email);
+  });
+});
 
 // Google OAuth route
 app.get('/auth/google', (req, res) => {
-  console.log('Using redirect URI:', process.env.GOOGLE_REDIRECT_URI);
   const url = oauth2Client.generateAuthUrl({
     scope: ['profile', 'email', 'https://www.googleapis.com/auth/drive.file'],
+    access_type: 'offline',
   });
   res.redirect(url);
 });
@@ -181,13 +146,7 @@ app.get('/auth/google/callback', async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '1h' }
     );
-    const redirectUrl = isVercel
-      ? `https://letter-zuta5wv57-harikacherukus-projects.vercel.app/editor?token=${token}&accessToken=${tokens.access_token}`
-      : isRender
-      ? `https://letter-app-alrf.onrender.com/editor?token=${token}&accessToken=${tokens.access_token}`
-      : `http://localhost:3000/editor?token=${token}&accessToken=${tokens.access_token}`;
-    console.log('Redirecting to:', redirectUrl);
-    res.redirect(redirectUrl);
+    res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/editor?token=${token}&accessToken=${tokens.access_token}`);
   } catch (error) {
     console.error('Google auth error:', error.response?.data || error.message);
     res.status(500).json({ error: 'Authentication failed', details: error.message });
@@ -216,9 +175,6 @@ const isAdmin = (req, res, next) => {
 
 // Create a new collaborative room
 app.post('/api/room', authenticateToken, async (req, res) => {
-  if (isVercel) {
-    return res.status(503).json({ error: 'Real-time collaboration is not supported on this deployment. Use the Render deployment instead.' });
-  }
   try {
     const roomId = uuidv4();
     const result = await pool.query(
@@ -241,8 +197,19 @@ app.post('/api/draft', authenticateToken, async (req, res) => {
       'INSERT INTO drafts (user_id, content) VALUES ($1, $2) RETURNING *',
       [req.user.id, content]
     );
-    console.log('Draft saved:', result.rows[0]);
-    res.json(result.rows[0]);
+    const draft = result.rows[0];
+    console.log('Draft saved:', draft);
+
+    // Fetch the user's email to include in the broadcast
+    const userResult = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
+    const userEmail = userResult.rows[0].email;
+    draft.email = userEmail;
+
+    // Broadcast the new draft to all admins
+    io.to('admin-room').emit('draft-saved', draft);
+    console.log('Broadcasted draft-saved event to admin-room:', draft);
+
+    res.json(draft);
   } catch (error) {
     console.error('Failed to save draft:', error);
     res.status(500).json({ error: 'Failed to save draft' });
@@ -270,6 +237,11 @@ app.delete('/api/draft/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Draft not found or not authorized' });
     }
     console.log('Draft deleted:', result.rows[0]);
+
+    // Broadcast the deletion to all admins
+    io.to('admin-room').emit('draft-deleted', id);
+    console.log('Broadcasted draft-deleted event to admin-room:', id);
+
     res.json({ message: 'Draft deleted successfully' });
   } catch (error) {
     console.error('Failed to delete draft:', error);
@@ -297,6 +269,11 @@ app.delete('/api/admin/draft/:id', authenticateToken, isAdmin, async (req, res) 
       return res.status(404).json({ error: 'Draft not found' });
     }
     console.log('Draft deleted by admin:', result.rows[0]);
+
+    // Broadcast the deletion to all admins
+    io.to('admin-room').emit('draft-deleted', id);
+    console.log('Broadcasted draft-deleted event to admin-room:', id);
+
     res.json({ message: 'Draft deleted successfully' });
   } catch (error) {
     console.error('Failed to delete draft:', error);
@@ -362,17 +339,6 @@ app.post('/api/save-to-drive', authenticateToken, async (req, res) => {
     console.error('Failed to save to Google Drive:', error.response?.data || error.message);
     res.status(500).json({ error: 'Failed to save to Google Drive', details: error.message });
   }
-});
-
-// Serve React frontend static files
-app.use(express.static(path.join(__dirname, '../client/build')));
-
-// Handle all other routes by serving the React app, but exclude static file paths
-app.get('*', (req, res) => {
-  if (req.url.startsWith('/static/')) {
-    return res.status(404).send('Static file not found');
-  }
-  res.sendFile(path.join(__dirname, '../client/build', 'index.html'));
 });
 
 const PORT = process.env.PORT || 5001;
