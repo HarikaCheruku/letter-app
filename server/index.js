@@ -13,7 +13,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000', // Use the deployed frontend URL in production
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
     methods: ['GET', 'POST'],
   },
 });
@@ -27,15 +27,49 @@ const pool = new Pool({
   database: process.env.DB_NAME,
   password: process.env.DB_PASSWORD,
   port: process.env.DB_PORT,
-  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false, // Enable SSL for production
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
 });
 
-// Test database connection
-pool.connect((err) => {
+// Test database connection and create tables if they don't exist
+pool.connect(async (err) => {
   if (err) {
     console.error('Database connection error:', err.stack);
   } else {
     console.log('Connected to database');
+    try {
+      // Create users table
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id SERIAL PRIMARY KEY,
+          google_id VARCHAR(255) UNIQUE NOT NULL,
+          email VARCHAR(255) NOT NULL,
+          role VARCHAR(50) NOT NULL DEFAULT 'user'
+        );
+      `);
+
+      // Create rooms table
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS rooms (
+          room_id VARCHAR(36) PRIMARY KEY,
+          creator_id INTEGER REFERENCES users(id),
+          content TEXT
+        );
+      `);
+
+      // Create drafts table
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS drafts (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id),
+          content TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
+      console.log('Database tables created or already exist');
+    } catch (error) {
+      console.error('Error creating database tables:', error);
+    }
   }
 });
 
@@ -65,7 +99,6 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id, 'User:', socket.user.email);
 
-  // Join the admin room if the user is an admin
   if (socket.user.role === 'admin') {
     socket.join('admin-room');
     console.log(`Admin ${socket.user.email} joined admin-room`);
@@ -200,12 +233,10 @@ app.post('/api/draft', authenticateToken, async (req, res) => {
     const draft = result.rows[0];
     console.log('Draft saved:', draft);
 
-    // Fetch the user's email to include in the broadcast
     const userResult = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
     const userEmail = userResult.rows[0].email;
     draft.email = userEmail;
 
-    // Broadcast the new draft to all admins
     io.to('admin-room').emit('draft-saved', draft);
     console.log('Broadcasted draft-saved event to admin-room:', draft);
 
@@ -238,7 +269,6 @@ app.delete('/api/draft/:id', authenticateToken, async (req, res) => {
     }
     console.log('Draft deleted:', result.rows[0]);
 
-    // Broadcast the deletion to all admins
     io.to('admin-room').emit('draft-deleted', id);
     console.log('Broadcasted draft-deleted event to admin-room:', id);
 
@@ -249,7 +279,6 @@ app.delete('/api/draft/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Admin-only endpoint: Fetch all drafts (from all users)
 app.get('/api/admin/drafts', authenticateToken, isAdmin, async (req, res) => {
   try {
     const result = await pool.query('SELECT drafts.*, users.email FROM drafts JOIN users ON drafts.user_id = users.id');
@@ -260,7 +289,6 @@ app.get('/api/admin/drafts', authenticateToken, isAdmin, async (req, res) => {
   }
 });
 
-// Admin-only endpoint: Delete any draft
 app.delete('/api/admin/draft/:id', authenticateToken, isAdmin, async (req, res) => {
   const { id } = req.params;
   try {
@@ -270,7 +298,6 @@ app.delete('/api/admin/draft/:id', authenticateToken, isAdmin, async (req, res) 
     }
     console.log('Draft deleted by admin:', result.rows[0]);
 
-    // Broadcast the deletion to all admins
     io.to('admin-room').emit('draft-deleted', id);
     console.log('Broadcasted draft-deleted event to admin-room:', id);
 
@@ -281,7 +308,6 @@ app.delete('/api/admin/draft/:id', authenticateToken, isAdmin, async (req, res) 
   }
 });
 
-// Save to Google Drive with folder organization
 app.post('/api/save-to-drive', authenticateToken, async (req, res) => {
   const { content, accessToken } = req.body;
   console.log('Received Google Drive save request:', req.user, content);
@@ -341,7 +367,6 @@ app.post('/api/save-to-drive', authenticateToken, async (req, res) => {
   }
 });
 
-// Add a simple root route for debugging
 app.get('/', (req, res) => {
   res.status(200).json({ message: 'Letter App Backend is running!' });
 });
